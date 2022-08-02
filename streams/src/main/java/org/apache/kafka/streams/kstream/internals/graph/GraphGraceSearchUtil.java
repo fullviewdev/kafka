@@ -17,9 +17,11 @@
 package org.apache.kafka.streams.kstream.internals.graph;
 
 import org.apache.kafka.streams.errors.TopologyException;
+import org.apache.kafka.streams.kstream.FVSessionWindows;
 import org.apache.kafka.streams.kstream.SessionWindows;
 import org.apache.kafka.streams.kstream.SlidingWindows;
 import org.apache.kafka.streams.kstream.Windows;
+import org.apache.kafka.streams.kstream.internals.KStreamFVSessionWindowAggregate;
 import org.apache.kafka.streams.kstream.internals.KStreamSessionWindowAggregate;
 import org.apache.kafka.streams.kstream.internals.KStreamSlidingWindowAggregate;
 import org.apache.kafka.streams.kstream.internals.KStreamWindowAggregate;
@@ -81,6 +83,10 @@ public final class GraphGraceSearchUtil {
             } else if (processorSupplier instanceof KStreamSessionWindowAggregate) {
                 final KStreamSessionWindowAggregate kStreamSessionWindowAggregate = (KStreamSessionWindowAggregate) processorSupplier;
                 final SessionWindows windows = kStreamSessionWindowAggregate.windows();
+                return windows.gracePeriodMs() + windows.inactivityGap();
+            } else if (processorSupplier instanceof KStreamFVSessionWindowAggregate) {
+                final KStreamFVSessionWindowAggregate kStreamSessionWindowAggregate = (KStreamFVSessionWindowAggregate) processorSupplier;
+                final FVSessionWindows windows = kStreamSessionWindowAggregate.windows();
                 return windows.gracePeriodMs() + windows.inactivityGap();
             } else if (processorSupplier instanceof KStreamSlidingWindowAggregate) {
                 final KStreamSlidingWindowAggregate kStreamSlidingWindowAggregate = (KStreamSlidingWindowAggregate) processorSupplier;

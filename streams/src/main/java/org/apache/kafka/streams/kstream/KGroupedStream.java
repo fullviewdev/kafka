@@ -572,4 +572,11 @@ public interface KGroupedStream<K, V> {
      */
     <VOut> CogroupedKStream<K, VOut> cogroup(final Aggregator<? super K, ? super V, VOut> aggregator);
 
+    /**
+     * Create a new {@link SessionWindowedKStream} instance that can be used to perform session windowed aggregations.
+     * @param windows the specification of the aggregation {@link FVSessionWindows}
+     * @return an instance of {@link TimeWindowedKStream}
+     */
+    SessionWindowedKStream<K, V> windowedBy(final FVSessionWindows windows);
+
 }
