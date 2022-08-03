@@ -34,7 +34,7 @@ import java.util.Set;
 import static org.apache.kafka.streams.kstream.internals.KGroupedStreamImpl.AGGREGATE_NAME;
 import static org.apache.kafka.streams.kstream.internals.KGroupedStreamImpl.REDUCE_NAME;
 
-public class FVSessionWindowedKStreamImpl<K, V> extends AbstractStream<K, V> implements SessionWindowedKStream<K, V> {
+public class FVSessionWindowedKStreamImpl<K, V extends FVSessionEvent> extends AbstractStream<K, V> implements SessionWindowedKStream<K, V> {
     private final FVSessionWindows windows;
     private final GroupedStreamAggregateBuilder<K, V> aggregateBuilder;
     private final Merger<K, Long> countMerger = (aggKey, aggOne, aggTwo) -> aggOne + aggTwo;

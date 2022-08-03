@@ -81,6 +81,8 @@ public final class FVSessionWindows {
 
     private final long graceMs;
 
+    private boolean ignoreInvalidEvents;
+
     private FVSessionWindows(final long gapMs, final long graceMs, long maxMs) {
         this.gapMs = gapMs;
         this.graceMs = graceMs;
@@ -171,6 +173,15 @@ public final class FVSessionWindows {
 
     public long maxTime() {
         return maxTimeMs;
+    }
+
+    public boolean isIgnoreInvalidEvents() {
+        return ignoreInvalidEvents;
+    }
+
+    public FVSessionWindows setIgnoreInvalidEvents(boolean value) {
+        ignoreInvalidEvents = value;
+        return this;
     }
 
     @Override

@@ -577,6 +577,6 @@ public interface KGroupedStream<K, V> {
      * @param windows the specification of the aggregation {@link FVSessionWindows}
      * @return an instance of {@link TimeWindowedKStream}
      */
-    SessionWindowedKStream<K, V> windowedBy(final FVSessionWindows windows);
+    <Val extends FVSessionEvent> SessionWindowedKStream<K, Val> windowedBy(final FVSessionWindows windows);
 
 }

@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.streams.kstream.internals;
 
+import org.apache.kafka.common.serialization.Serde;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.streams.kstream.*;
@@ -220,21 +221,20 @@ class KGroupedStreamImpl<K, V> extends AbstractStream<K, V> implements KGroupedS
         );
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public SessionWindowedKStream<K, V> windowedBy(final FVSessionWindows windows) {
+    public <Val extends FVSessionEvent> SessionWindowedKStream<K, Val> windowedBy(final FVSessionWindows windows) {
 
-        FVSessionWindowedKStreamImpl<K, V> result = new FVSessionWindowedKStreamImpl<>(
+        return new FVSessionWindowedKStreamImpl<K, Val>(
                 windows,
                 builder,
                 subTopologySourceNodes,
                 name,
                 keySerde,
-                valueSerde,
-                aggregateBuilder,
+                (Serde<Val>)valueSerde,
+                (GroupedStreamAggregateBuilder<K, Val>)aggregateBuilder,
                 graphNode
         );
-        result.emitStrategy(EmitStrategy.onWindowClose());
-        return result;
     }
 
     private <T> KTable<K, T> doAggregate(final KStreamAggProcessorSupplier<K, V, K, T> aggregateSupplier,
