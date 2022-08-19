@@ -32,8 +32,10 @@ import org.apache.kafka.streams.state.ValueAndTimestamp;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.sql.Timestamp;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.*;
 
 import static org.apache.kafka.streams.StreamsConfig.InternalConfig.EMIT_INTERVAL_MS_KSTREAMS_WINDOWED_AGGREGATION;
 import static org.apache.kafka.streams.processor.internals.metrics.ProcessorNodeMetrics.emitFinalLatencySensor;
@@ -51,7 +53,7 @@ public class KStreamFVSessionWindowAggregate<KIn, VIn extends FVSessionEvent, VA
     private final Merger<? super KIn, VAgg> sessionMerger;
     private final EmitStrategy emitStrategy;
 
-    private boolean sendOldValues = false;
+    private boolean sendOldValues = true;
 
     public KStreamFVSessionWindowAggregate(final FVSessionWindows windows,
                                            final String storeName,
@@ -82,7 +84,7 @@ public class KStreamFVSessionWindowAggregate<KIn, VIn extends FVSessionEvent, VA
     }
 
     private class KStreamSessionWindowAggregateProcessor extends
-        ContextualProcessor<KIn, VIn, Windowed<KIn>, Change<VAgg>> {
+            ContextualProcessor<KIn, VIn, Windowed<KIn>, Change<VAgg>> {
 
         private SessionStore<KIn, VAgg> store;
         private TimestampedTupleForwarder<Windowed<KIn>, VAgg> tupleForwarder;
@@ -124,16 +126,22 @@ public class KStreamFVSessionWindowAggregate<KIn, VIn extends FVSessionEvent, VA
                 tupleForwarder = new TimestampedTupleForwarder<>(context, sendOldValues);
             } else {
                 tupleForwarder = new TimestampedTupleForwarder<>(
-                    store,
-                    context,
-                    new SessionCacheFlushListener<>(context),
-                    sendOldValues);
+                        store,
+                        context,
+                        new SessionCacheFlushListener<>(context),
+                        sendOldValues);
             }
+        }
+
+        private String ToStr(long millis) {
+            Date date = new Timestamp(millis);
+            DateFormat dateFormat = new SimpleDateFormat("mm:ss.SSS");
+            return dateFormat.format(date);
         }
 
         @Override
         public void process(final Record<KIn, VIn> record) {
-            // if the key is null, we do not need proceed aggregating
+            // if the key is null, we do not need to proceed aggregating
             // the record with the table
             if (record.key() == null) {
                 logSkippedRecordForNullKey();
@@ -149,25 +157,41 @@ public class KStreamFVSessionWindowAggregate<KIn, VIn extends FVSessionEvent, VA
             SessionWindow mergedWindow = newSessionWindow;
             VAgg agg = initializer.apply();
 
+            final long winMaxTime = windows.maxTime();
+
+            long otherWindowsCloseTime = Long.MAX_VALUE;
+
             try (
-                final KeyValueIterator<Windowed<KIn>, VAgg> iterator = store.findSessions(
-                    record.key(),
-                    timestamp - windows.inactivityGap(),
-                    timestamp + windows.inactivityGap()
-                )
+                    final KeyValueIterator<Windowed<KIn>, VAgg> iterator = store.findSessions(
+                            record.key(),
+                            timestamp - windows.inactivityGap(),
+                            timestamp + windows.inactivityGap()
+                    )
             ) {
                 while (iterator.hasNext()) {
                     final KeyValue<Windowed<KIn>, VAgg> next = iterator.next();
-
-                    final long winMaxTime = windows.maxTime();
 
                     if (winMaxTime > 0) {
                         // Calculate maxTime and run it against window end and record timestamp
                         final Window win = next.key.window();
                         final long maxTime = win.start() + winMaxTime;
-                        final boolean reachedMaxTime = maxTime < win.end() || maxTime < record.timestamp();
+                        final boolean reachedMaxTime = maxTime < win.end();
+
+                        final long winSize = win.end() - win.start();
+
+                        if (winSize >= winMaxTime && record.timestamp() > winMaxTime) {
+                            otherWindowsCloseTime = Math.min(otherWindowsCloseTime, win.end());
+                            continue;
+                        }
 
                         if (reachedMaxTime) {
+                            LOG.warn("MAX: {} | S: {} E: {} TS: {} WM:{} M: {}",
+                                    next.value,
+                                    ToStr(win.start()),
+                                    ToStr(win.end()),
+                                    ToStr(record.timestamp()),
+                                    winMaxTime,
+                                    ToStr(maxTime));
                             continue;
                         }
                     }
@@ -196,6 +220,9 @@ public class KStreamFVSessionWindowAggregate<KIn, VIn extends FVSessionEvent, VA
                 maybeForwardUpdate(sessionKey, null, agg);
             }
 
+            if (otherWindowsCloseTime != Long.MAX_VALUE) {
+                maybeForwardFinalResult(record, otherWindowsCloseTime);
+            }
             maybeForwardFinalResult(record, windowCloseTime);
         }
 
@@ -272,26 +299,29 @@ public class KStreamFVSessionWindowAggregate<KIn, VIn extends FVSessionEvent, VA
 
             // Only time ordered (indexed) session store should have implemented
             // this function, otherwise a not-supported exception would throw
-            final KeyValueIterator<Windowed<KIn>, VAgg> windowToEmit = store
-                .findSessions(emitRangeLowerBound, emitRangeUpperBound);
+            try (
+                    KeyValueIterator<Windowed<KIn>, VAgg> windowToEmit = store
+                            .findSessions(emitRangeLowerBound, emitRangeUpperBound);
+            ) {
 
-            int emittedCount = 0;
-            while (windowToEmit.hasNext()) {
-                emittedCount++;
-                final KeyValue<Windowed<KIn>, VAgg> kv = windowToEmit.next();
+                int emittedCount = 0;
+                while (windowToEmit.hasNext()) {
+                    emittedCount++;
+                    final KeyValue<Windowed<KIn>, VAgg> kv = windowToEmit.next();
 
-                tupleForwarder.maybeForward(
-                    record.withKey(kv.key)
-                        .withValue(new Change<>(kv.value, null))
-                        // set the timestamp as the window end timestamp
-                        .withTimestamp(kv.key.window().end())
-                        .withHeaders(record.headers()));
+                    tupleForwarder.maybeForward(
+                            record.withKey(kv.key)
+                                    .withValue(new Change<>(kv.value, null))
+                                    // set the timestamp as the window end timestamp
+                                    .withTimestamp(kv.key.window().end())
+                                    .withHeaders(record.headers()));
+                }
+                emittedRecordsSensor.record(emittedCount);
+                emitFinalLatencySensor.record(time.milliseconds() - startMs);
+
+                lastEmitWindowCloseTime = windowCloseTime;
+                internalProcessorContext.addProcessorMetadataKeyValue(storeName, windowCloseTime);
             }
-            emittedRecordsSensor.record(emittedCount);
-            emitFinalLatencySensor.record(time.milliseconds() - startMs);
-
-            lastEmitWindowCloseTime = windowCloseTime;
-            internalProcessorContext.addProcessorMetadataKeyValue(storeName, windowCloseTime);
         }
 
         private void logSkippedRecordForNullKey() {
@@ -382,8 +412,8 @@ public class KStreamFVSessionWindowAggregate<KIn, VIn extends FVSessionEvent, VA
         @Override
         public ValueAndTimestamp<VAgg> get(final Windowed<KIn> key) {
             return ValueAndTimestamp.make(
-                store.fetchSession(key.key(), key.window().start(), key.window().end()),
-                key.window().end());
+                    store.fetchSession(key.key(), key.window().start(), key.window().end()),
+                    key.window().end());
         }
     }
 }
